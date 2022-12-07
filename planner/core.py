@@ -28,11 +28,13 @@ class PlanMeta(type):
         super().__init__(name, bases, attrs)
 
     def __new__(mcs, name, bases, attrs: dict, actions=None):
-        actions = actions if actions is not None else attrs.get('actions', [])
-        attrs['actions'] = [_.execute if isinstance(_, PlanMeta) and issubclass(_, Plan) else _ for _ in
-                            actions]
-        attrs['_result'] = []
-        return type.__new__(mcs, name, bases, attrs)
+        cls = type.__new__(mcs, name, bases, attrs)
+        cls._thread_results_mapper = {}
+
+        actions = actions if actions is not None else cls.actions
+        cls.actions = [_.execute if isinstance(_, PlanMeta) and issubclass(_, Plan) else _ for _ in actions]
+
+        return cls
 
 
 class Plan(object, metaclass=PlanMeta):
