@@ -39,6 +39,7 @@ class test_plan_executeTestCase(unittest.TestCase):
 
         assert OuterPlan.execute() == return_values
 
+    @unittest.skip
     def test_execute_and_output(self):
         """output"""
 

@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import linecache
+from types import FunctionType, MethodType
 from typing import List, Tuple, Iterable
 
 line_mask = (-2, -1, 0, 1, 2)
@@ -16,6 +17,29 @@ horizon_line = '-' * 80 + '\n'
 
 error_line_mark = ' --> '
 normal_line_mark = ' ' * len(error_line_mark)
+
+
+def get_action_name(action):
+    """获取一个函数/方法信息"""
+    # FIXME: import and other type
+    from planner.core import PlanMeta
+
+    if isinstance(action, PlanMeta):
+        return f'(Plan) {action.__name__}'
+    # 函数
+    elif isinstance(action, FunctionType):
+        return f'(Function) {action.__name__}'
+    # 实例方法
+    elif isinstance(action, MethodType):
+        self = action.__self__
+        # 类方法
+        if isinstance(self, type):
+            return f'(Class method) {self.__name__}'
+        # 实例方法
+        else:
+            return f'(Object) {self.__class__.__name__}'
+    else:
+        return f'(Other) {str(action)}'
 
 
 def get_error_line(origin_exception: Exception):
@@ -39,39 +63,64 @@ def get_error_line(origin_exception: Exception):
 
 class PlanException(Exception):
 
-    def __init__(self, error_lines=5):
+    def __init__(self, origin_exception: Exception, origin_plan, error_lines=5):
+        self.origin_exception = origin_exception
+        self.origin_plan = origin_plan
         self.error_lines: int = error_lines
-        self.plan_trace: List[Tuple[Exception, object, List[str]]] = []
+        # FIXME: Plan typing
+        self.trace: List[List[Tuple[bool, str]]] = []
+        super().__init__()
 
-    def add_exception(self, plan, exception: Exception):
-        """添加异常"""
+    def add_origin_exception(self, plan, e):
+        """添加原始异常类"""
+        # reduce -> lambda in reduce -> execute_single_actions
+        failed_tb = e.__traceback__.tb_next.tb_next.tb_next
+        current_trace = []
 
-        # reduce -> lambda in reduce -> execute_single_actions -> target function
-        tb = exception.__traceback__.tb_next.tb_next.tb_next
-
-        current_plan_actions = []
         for index, action in enumerate(plan.actions):
-            action_name = f'{action.__self__.__name__}' if hasattr(action, "__self__") and isinstance(action.__self__,
-                                                                                                      plan.__class__) and action.__name__ == 'execute' else action.__name__
-            current_plan_actions.append(
-                f'{error_line_mark if action.__name__ == tb.tb_frame.f_code.co_name else normal_line_mark} [{index + 1}] {action_name}')
+            action_name = get_action_name(action)
 
-        self.plan_trace.insert(0, (exception, plan, current_plan_actions,))
+            if hasattr(action, "__code__") and action.__code__.co_code == failed_tb.tb_frame.f_code.co_code:
+                current_trace.append((True, f'{error_line_mark} [{index + 1}] {action_name}'))
+            else:
+                current_trace.append((False, f'{normal_line_mark} [{index + 1}] {action_name}'))
+
+        self.trace.insert(0, current_trace)
+
+    def add_plan_exception(self, plan, e):
+        """plan异常
+
+        如果为Plan异常，则action必定为Plan类。
+        """
+
+        execute_tb = e.__traceback__.tb_next.tb_next
+
+        current_trace = []
+
+        for index, action in enumerate(plan.actions):
+            action_name = get_action_name(action)
+
+            # 如果是执行的plan类
+            if action is execute_tb.tb_frame.f_locals['action']:
+                current_trace.append((True, f'{error_line_mark} [{index + 1}] {action_name}'))
+            else:
+                current_trace.append((False, f'{normal_line_mark} [{index + 1}] {action_name}'))
+
+        self.trace.insert(0, current_trace)
 
     def get_plan_trace(self, level=0) -> Iterable[str]:
         """获取Plan的路径"""
-        if len(self.plan_trace) > level:
-            _, plan, action_lines = self.plan_trace[level]
+        if len(self.trace) > level:
+            action_lines = self.trace[level]
 
             level_0_syntax = ' |' if level else ''
             syntax_content = ' ' * (level * 4)
             target_syntax_content = ' ---' * level
 
-            if not level:
-                yield f'Plan <{plan.__name__}> execute:'
-
-            for action_line in action_lines:
-                if action_line.startswith(error_line_mark):
+            # if not level:
+            #     yield f'Plan <{plan.__name__}> execute:'
+            for error_flag, action_line in action_lines:
+                if error_flag:
                     yield f'|{target_syntax_content}{level_0_syntax}{action_line}'
 
                     yield from self.get_plan_trace(level + 1)
@@ -79,12 +128,14 @@ class PlanException(Exception):
                     yield f'|{syntax_content}{level_0_syntax}{action_line}'
 
     def __str__(self):
-        origin_error = self.plan_trace[-1][0]
+        origin_error = self.origin_exception
+        plan = self.origin_plan
 
         error_content = get_error_line(origin_error)
 
+        plan_hand = f'Plan [{plan.__name__}]:\n'
         error_hand = f'Raise [{origin_error.__class__.__name__}]. Message:{str(origin_error)}\n'
 
         plan_content = '\n'.join(list(self.get_plan_trace()))
 
-        return f'{error_hand}{horizon_line}{plan_content}\n{horizon_line}{error_content}'
+        return f'{horizon_line}{error_hand}{horizon_line}{plan_hand}{horizon_line}{plan_content}\n{horizon_line}{error_content}'

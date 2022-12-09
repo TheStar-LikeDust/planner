@@ -46,10 +46,10 @@ class test_planTestCase(unittest.TestCase):
         with self.subTest('multi level'):
             level_2_plan = create_plan(
                 actions=[
-                lambda: None,
-                plan,
+                    lambda: None,
+                    plan,
 
-            ])
+                ])
 
             assert level_2_plan.execute() == 1
 
